@@ -71,7 +71,6 @@ public class StudentNetworkSimulator extends NetworkSimulator {
 	int bstate = 0;
 	int bOnceThru = 0;
 	Packet bstored_pkt;
-	int seqno;
 
 	// This is the constructor. Don't touch!
 	public StudentNetworkSimulator(int numMessages, double loss,
@@ -90,9 +89,25 @@ public class StudentNetworkSimulator extends NetworkSimulator {
 	 * receiving upper layer.
 	 **/
 	protected void aOutput(Message message) {
-		astored_pkt = new Packet(seqno, 0, 0, message.getData());
-		this.toLayer3(A, astored_pkt);
-		System.out.println("A sent: " + astored_pkt.getPayload());
+		if (astate == 0) {
+			int seqno = 0;
+			int checksum = calculateChecksum(message.getData(), seqno, 0);
+			astored_pkt = new Packet(seqno, 0, checksum, message.getData());
+			this.toLayer3(A, astored_pkt);
+			System.out.println("A: sending packet " + seqno);
+			this.startTimer(A, 5);
+			astate = 1;
+		} else if (astate == 2) {
+			int seqno = 1;
+			int checksum = calculateChecksum(message.getData(), seqno, 0);
+			astored_pkt = new Packet(seqno, 0, checksum, message.getData());
+			this.toLayer3(A, astored_pkt);
+			System.out.println("A: sending packet " + seqno);
+			this.startTimer(A, 5);
+			astate = 3;
+		} else {
+			// Refuse packet, warn //timers need to be longer
+		}
 	}
 
 	/**
@@ -102,7 +117,40 @@ public class StudentNetworkSimulator extends NetworkSimulator {
 	 * B-side.
 	 **/
 	protected void aInput(Packet packet) {
-
+		if (astate == 0) {
+		}
+		if (astate == 1) {
+			int checksum = calculateChecksum(packet.getPayload(),
+					packet.getSeqnum(), packet.getAcknum());
+			if (packet.getChecksum() != checksum) {
+				System.out.println("A: ACK corrupt");
+			}
+			if (packet.getAcknum() == 1) {
+				System.out.println("A: got ACK1, we're waiting for ACK0");
+			}
+			if (packet.getAcknum() == 0) {
+				this.stopTimer(A);
+				astate = 2;
+				System.out.println("A: got ACK0");
+			}
+		}
+		if (astate == 2) {
+		}
+		if (astate == 3) {
+			int checksum = calculateChecksum(packet.getPayload(),
+					packet.getSeqnum(), packet.getAcknum());
+			if (packet.getChecksum() != checksum) {
+				System.out.println("A: ACK corrupt");
+			}
+			if (packet.getAcknum() == 0) {
+				System.out.println("A: got ACK0, we're waiting for ACK1");
+			}
+			if (packet.getAcknum() == 0) {
+				this.stopTimer(A);
+				astate = 0;
+				System.out.println("A: got ACK1");
+			}
+		}
 	}
 
 	/**
@@ -112,7 +160,9 @@ public class StudentNetworkSimulator extends NetworkSimulator {
 	 * how the timer is started and stopped.
 	 **/
 	protected void aTimerInterrupt() {
-
+		System.out.println("A: Timer interrupt, resending packet");
+		this.toLayer3(A, astored_pkt);
+		this.startTimer(A, 5);
 	}
 
 	/**
@@ -132,8 +182,32 @@ public class StudentNetworkSimulator extends NetworkSimulator {
 	 * A-side.
 	 **/
 	protected void bInput(Packet packet) {
-		this.toLayer5(packet.getPayload());
-		System.out.println("B received: " + packet.getPayload());
+		int checksum = calculateChecksum(packet.getPayload(),
+				packet.getSeqnum(), packet.getAcknum());
+		if (packet.getChecksum() != checksum) {
+			if (bOnceThru == 1) {
+				this.toLayer3(B, packet);
+			}
+		} else {
+			if (((packet.getSeqnum() == 0) && (bstate == 0))
+					|| ((packet.getSeqnum() == 1) && (bstate == 1))) {
+				this.toLayer5(packet.getPayload());
+				System.out.println("B: got packet " + packet.getSeqnum());
+				checksum = calculateChecksum("", 0, packet.getAcknum());
+				bstored_pkt = new Packet(0, packet.getAcknum(), checksum);
+				this.toLayer3(B, bstored_pkt);
+				System.out.println("B: sending ACK" + packet.getAcknum());
+				bstate = (bstate + 1) % 2;
+				bOnceThru = 1;
+			} else {
+				if ((bstate == 1) || (bOnceThru == 1)) {
+					checksum = calculateChecksum("", 0, packet.getAcknum());
+					bstored_pkt = new Packet(0, packet.getAcknum(), checksum);
+					this.toLayer3(B, bstored_pkt);
+					System.out.println("B: sending ACK" + packet.getAcknum());
+				}
+			}
+		}
 	}
 
 	/**
